@@ -215,6 +215,27 @@ if sanityOK
 end
 fprintf('\n');
 
+%% ======================== GPR MODEL EQUATIONS ============================
+% Print the mathematical form and fitted parameters for each GPR surrogate.
+fprintf('--- GPR Predictor Model Equations ---\n');
+fprintf('  All three models use the Matern 3/2 kernel:\n');
+fprintf('    k(x,x'') = sigma_f^2 * (1 + sqrt(3)*r/l) * exp(-sqrt(3)*r/l)\n');
+fprintf('    where r = ||x - x''||,  l = length scale,  sigma_f = signal std dev\n');
+fprintf('    Prediction: y(x*) = k(x*,X) * [K(X,X) + sigma_n^2 I]^{-1} * y\n\n');
+
+for ri = 1:3
+    kinfo = bestModels{ri}.KernelInformation;
+    kpars = kinfo.KernelParameters;          % [length scale(s); signal std]
+    noiseSig = bestModels{ri}.Sigma;
+    fprintf('  %s model:\n', respNames{ri});
+    fprintf('    Length scale  l       = %.6f\n', kpars(1));
+    fprintf('    Signal std    sigma_f = %.6f\n', kpars(2));
+    fprintf('    Noise std     sigma_n = %.6f\n', noiseSig);
+    fprintf('    Alpha (dual coefficients): [%s]\n', ...
+        strjoin(arrayfun(@(v) sprintf('%.4f',v), bestModels{ri}.Alpha, 'UniformOutput', false), ', '));
+    fprintf('\n');
+end
+
 %% ======================== DESIRABILITY LIMITS ============================
 limits.Rz.target = min(Rz);   limits.Rz.upper = max(Rz);
 limits.Rt.target = min(Rt);   limits.Rt.upper = max(Rt);
@@ -245,9 +266,9 @@ optsMain = optimoptions('particleswarm', ...
 best.Vc  = xBest(1);
 best.f   = xBest(2);
 best.DOC = xBest(3);
-best.Rz  = predict(mdlRz, xBest);
-best.Rt  = predict(mdlRt, xBest);
-best.VB  = predict(mdlVB, xBest);
+[best.Rz, best.Rz_sd] = predict(mdlRz, xBest);
+[best.Rt, best.Rt_sd] = predict(mdlRt, xBest);
+[best.VB, best.VB_sd] = predict(mdlVB, xBest);
 best.D   = calcOverallDesirability(best.Rz, best.Rt, best.VB, limits, mainWeights, shape);
 
 fprintf('\n================ MAIN RECOMMENDED SOLUTION ================\n');
@@ -255,9 +276,9 @@ fprintf('Weights: wRz = %.2f, wRt = %.2f, wVB = %.2f\n', mainWeights.Rz, mainWei
 fprintf('Vc  = %.2f m/min\n',   best.Vc);
 fprintf('f   = %.2f mm/min\n',  best.f);
 fprintf('DOC = %.4f mm\n',      best.DOC);
-fprintf('Predicted Rz = %.4f um\n',  best.Rz);
-fprintf('Predicted Rt = %.4f um\n',  best.Rt);
-fprintf('Predicted VB = %.5f mm\n',  best.VB);
+fprintf('Predicted Rz = %.4f um  (95%% CI: [%.4f, %.4f])\n', best.Rz, best.Rz-1.96*best.Rz_sd, best.Rz+1.96*best.Rz_sd);
+fprintf('Predicted Rt = %.4f um  (95%% CI: [%.4f, %.4f])\n', best.Rt, best.Rt-1.96*best.Rt_sd, best.Rt+1.96*best.Rt_sd);
+fprintf('Predicted VB = %.5f mm  (95%% CI: [%.5f, %.5f])\n', best.VB, best.VB-1.96*best.VB_sd, best.VB+1.96*best.VB_sd);
 fprintf('Overall Desirability D = %.4f\n', best.D);
 fprintf('============================================================\n\n');
 
@@ -490,37 +511,47 @@ if ~isempty(convHistory)
 end
 saveas(fig2, fullfile(resultsDir, 'fig2_pso_convergence.png'));
 
-% --- Figure 3: Trade-Off Cloud (Rt vs Rz, colored by VB) ---
-fig3 = figure('Color', bg, 'Name', '3 - Trade-Off Cloud', 'NumberTitle', 'off');
-ax3  = axes(fig3);
+% --- Figure 3: Trade-Off Cloud split by VB weight level (2x2) ---
+fig3 = figure('Color', bg, 'Name', '3 - Trade-Off Cloud', 'NumberTitle', 'off', ...
+    'Position', [50 50 1200 900]);
 
-% sweepData columns: 7=Rz, 8=Rt, 9=VB (all numeric, no cell2mat needed)
-scatter(ax3, sweepData(:,8), sweepData(:,7), 70, sweepData(:,9), 'filled', ...
-    'MarkerEdgeColor', bg, 'LineWidth', 0.5);
-hold(ax3, 'on');
+for iw = 1:numel(wearLevels)
+    ax3 = subplot(2, 2, iw, 'Parent', fig3);
+    mask = abs(sweepData(:,3) - wearLevels(iw)) < 1e-6;
+    sd = sweepData(mask, :);
 
-scatter(ax3, Rt, Rz, 55, clr_exp, 's', 'filled', ...
-    'MarkerEdgeColor', bg, 'DisplayName', 'Experiments');
+    scatter(ax3, sd(:,8), sd(:,7), 70, sd(:,9), 'filled', ...
+        'MarkerEdgeColor', bg, 'LineWidth', 0.5);
+    hold(ax3, 'on');
 
-scatter(ax3, caseTbl.Pred_Rt, caseTbl.Pred_Rz, 130, 'r', 'd', 'filled', ...
-    'MarkerEdgeColor', fg, 'DisplayName', 'Named cases');
+    scatter(ax3, Rt, Rz, 45, clr_exp, 's', 'filled', ...
+        'MarkerEdgeColor', bg, 'DisplayName', 'Experiments');
 
-for i = 1:height(caseTbl)
-    text(ax3, caseTbl.Pred_Rt(i), caseTbl.Pred_Rz(i), ['  ' caseTbl.Case{i}], ...
-        'Color', fg, 'FontSize', 9, 'FontWeight', 'bold');
+    % Overlay named cases whose wVB matches this panel
+    for ic = 1:height(caseTbl)
+        if abs(caseTbl.wVB(ic) - wearLevels(iw)) < 1e-6
+            scatter(ax3, caseTbl.Pred_Rt(ic), caseTbl.Pred_Rz(ic), 130, 'r', 'd', 'filled', ...
+                'MarkerEdgeColor', fg, 'HandleVisibility', 'off');
+            text(ax3, caseTbl.Pred_Rt(ic), caseTbl.Pred_Rz(ic), ['  ' caseTbl.Case{ic}], ...
+                'Color', fg, 'FontSize', 8, 'FontWeight', 'bold');
+        end
+    end
+
+    setDark(ax3);
+    xlabel(ax3, 'Predicted R_t (\mum)', 'Color', fg);
+    ylabel(ax3, 'Predicted R_z (\mum)', 'Color', fg);
+    title(ax3, sprintf('w_{VB} = %.2f', wearLevels(iw)), ...
+        'Color', fg, 'FontWeight', 'bold', 'FontSize', 11);
+    colormap(ax3, parula);
+    cb3 = colorbar(ax3);
+    cb3.Label.String = 'Pred VB (mm)';
+    cb3.Label.Color = fg; cb3.Color = fg;
+    grid(ax3, 'on'); box(ax3, 'on');
 end
 
-setDark(ax3);
-xlabel(ax3, 'Predicted R_t (\mum)', 'Color', fg, 'FontSize', 12);
-ylabel(ax3, 'Predicted R_z (\mum)', 'Color', fg, 'FontSize', 12);
-title(ax3, 'Trade-Off Cloud (color = predicted VB)', 'Color', fg, 'FontSize', 13, 'FontWeight', 'bold');
-colormap(ax3, parula);
-cb3 = colorbar(ax3);
-cb3.Label.String = 'Predicted VB (mm)';
-cb3.Label.Color = fg; cb3.Color = fg;
-leg3 = legend(ax3, 'Location', 'best');
-leg3.TextColor = fg; leg3.Color = bg; leg3.EdgeColor = grid_c;
-grid(ax3, 'on'); box(ax3, 'on');
+sg3 = sgtitle(fig3, 'Trade-Off Cloud: R_z vs R_t  (split by VB weight)', ...
+    'FontSize', 14, 'FontWeight', 'bold');
+sg3.Color = fg;
 saveas(fig3, fullfile(resultsDir, 'fig3_tradeoff_cloud.png'));
 
 % --- Figure 4: Case Comparison Bar Charts ---
@@ -585,47 +616,55 @@ ranges = {linspace(lb(1),ub(1),sweepPts), linspace(lb(2),ub(2),sweepPts), linspa
 xlabs  = {'Cutting Speed V_c (m/min)', 'Feed Rate f (mm/min)', 'Depth of Cut DOC (mm)'};
 
 for vi = 1:3
-    Rz_sw = zeros(sweepPts,1);
-    Rt_sw = zeros(sweepPts,1);
-    VB_sw = zeros(sweepPts,1);
+    Rz_sw = zeros(sweepPts,1);  Rz_sd = zeros(sweepPts,1);
+    Rt_sw = zeros(sweepPts,1);  Rt_sd = zeros(sweepPts,1);
+    VB_sw = zeros(sweepPts,1);  VB_sd = zeros(sweepPts,1);
 
     for k = 1:sweepPts
         xk = basePoint;
         xk(vi) = ranges{vi}(k);
-        Rz_sw(k) = predict(mdlRz, xk);
-        Rt_sw(k) = predict(mdlRt, xk);
-        VB_sw(k) = predict(mdlVB, xk);
+        [Rz_sw(k), Rz_sd(k)] = predict(mdlRz, xk);
+        [Rt_sw(k), Rt_sd(k)] = predict(mdlRt, xk);
+        [VB_sw(k), VB_sd(k)] = predict(mdlVB, xk);
     end
 
-    % Top row: roughness (dual y-axis)
+    xv = ranges{vi}(:);
+
+    % Top row: Rz with 95% CI
     axT = subplot(2, 3, vi, 'Parent', fig6);
-    yyaxis(axT, 'left');
-    plot(axT, ranges{vi}, Rt_sw, '-', 'LineWidth', 2, 'Color', clr_Rt);
-    axT.YAxis(1).Color = clr_Rt;
-    ylabel(axT, 'R_t (\mum)', 'Color', clr_Rt);
-    yyaxis(axT, 'right');
-    plot(axT, ranges{vi}, Rz_sw, '-', 'LineWidth', 2, 'Color', clr_Rz);
-    axT.YAxis(2).Color = clr_Rz;
-    ylabel(axT, 'R_z (\mum)', 'Color', clr_Rz);
     hold(axT, 'on');
+    fill(axT, [xv; flipud(xv)], ...
+        [Rz_sw - 1.96*Rz_sd; flipud(Rz_sw + 1.96*Rz_sd)], ...
+        clr_Rz, 'FaceAlpha', 0.18, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+    fill(axT, [xv; flipud(xv)], ...
+        [Rt_sw - 1.96*Rt_sd; flipud(Rt_sw + 1.96*Rt_sd)], ...
+        clr_Rt, 'FaceAlpha', 0.18, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+    plot(axT, xv, Rz_sw, '-', 'LineWidth', 2, 'Color', clr_Rz, 'DisplayName', 'R_z');
+    plot(axT, xv, Rt_sw, '-', 'LineWidth', 2, 'Color', clr_Rt, 'DisplayName', 'R_t');
     xline(axT, basePoint(vi), '--', 'Color', clr_opt, 'LineWidth', 1.5, ...
         'Label', 'Opt', 'LabelColor', clr_opt, 'FontSize', 9);
-    set(axT, 'Color', bg, 'XColor', fg, 'GridColor', grid_c, 'GridAlpha', 0.55, ...
-        'FontSize', 11, 'LineWidth', 0.8);
+    set(axT, 'Color', bg, 'XColor', fg, 'YColor', fg, 'GridColor', grid_c, ...
+        'GridAlpha', 0.55, 'FontSize', 11, 'LineWidth', 0.8);
     xlabel(axT, xlabs{vi}, 'Color', fg);
+    ylabel(axT, 'Roughness (\mum)', 'Color', fg);
     title(axT, sprintf('Roughness vs %s', varNames{vi}), 'Color', fg, 'FontWeight', 'bold');
+    l6t = legend(axT, 'Location', 'best');
+    l6t.TextColor = fg; l6t.Color = bg; l6t.EdgeColor = grid_c;
     grid(axT, 'on');
 
-    % Bottom row: tool wear
+    % Bottom row: VB with 95% CI
     axB = subplot(2, 3, vi + 3, 'Parent', fig6);
-    plot(axB, ranges{vi}, VB_sw, '-', 'LineWidth', 2, 'Color', clr_VB);
     hold(axB, 'on');
+    fill(axB, [xv; flipud(xv)], ...
+        [VB_sw - 1.96*VB_sd; flipud(VB_sw + 1.96*VB_sd)], ...
+        clr_VB, 'FaceAlpha', 0.20, 'EdgeColor', 'none');
+    plot(axB, xv, VB_sw, '-', 'LineWidth', 2, 'Color', clr_VB);
     xline(axB, basePoint(vi), '--', 'Color', clr_opt, 'LineWidth', 1.5, ...
         'Label', 'Opt', 'LabelColor', clr_opt, 'FontSize', 9);
     setDark(axB);
     xlabel(axB, xlabs{vi}, 'Color', fg);
     ylabel(axB, 'VB (mm)', 'Color', fg);
-    title(axB, sprintf('Tool Wear vs %s', varNames{vi}), 'Color', fg, 'FontWeight', 'bold');
+    title(axB, sprintf('Tool Wear vs %s  (shaded = 95%% CI)', varNames{vi}), 'Color', fg, 'FontWeight', 'bold');
     grid(axB, 'on');
 end
 
@@ -689,7 +728,88 @@ view(ax7, -35, 30);
 grid(ax7, 'on'); box(ax7, 'on');
 saveas(fig7, fullfile(resultsDir, 'fig7_3d_desirability_surface.png'));
 
-fprintf('\nAll 7 figures and CSV tables saved in: %s/\n', resultsDir);
+% --- Figure 8: 2-D Trade-Off Curve  Rz vs Rt (fixed VB weight = 0.20) ---
+fig8 = figure('Color', bg, 'Name', '8 - Rz vs Rt Trade-Off', 'NumberTitle', 'off');
+ax8  = axes(fig8);
+
+fixedWVB = 0.20;
+alphaFine = linspace(0.05, 0.95, 40);
+trRz = zeros(size(alphaFine));
+trRt = zeros(size(alphaFine));
+trRz_sd = zeros(size(alphaFine));
+trRt_sd = zeros(size(alphaFine));
+
+for ia = 1:numel(alphaFine)
+    a = alphaFine(ia);
+    remain = 1 - fixedWVB;
+    w = struct('Rz', remain*a, 'Rt', remain*(1-a), 'VB', fixedWVB);
+    obj = @(x) desirabilityObjective(x, mdlRz, mdlRt, mdlVB, ...
+        limits, w, shape, X, lb, ub, usePenalty, penaltyStartDist, penaltyWeight);
+    [xS, ~] = particleswarm(obj, 3, lb, ub, optsFast);
+    [trRz(ia), trRz_sd(ia)] = predict(mdlRz, xS);
+    [trRt(ia), trRt_sd(ia)] = predict(mdlRt, xS);
+end
+
+hold(ax8, 'on');
+% 95% CI ellipse-like bands
+fill(ax8, [trRt - 1.96*trRt_sd, fliplr(trRt + 1.96*trRt_sd)], ...
+    [trRz - 1.96*trRz_sd, fliplr(trRz + 1.96*trRz_sd)], ...
+    clr_Rz, 'FaceAlpha', 0.15, 'EdgeColor', 'none');
+plot(ax8, trRt, trRz, '-o', 'Color', clr_Rz, 'LineWidth', 2, ...
+    'MarkerSize', 5, 'MarkerFaceColor', clr_Rz, 'DisplayName', 'Pareto front (w_{VB}=0.20)');
+scatter(ax8, Rt, Rz, 55, clr_exp, 's', 'filled', 'MarkerEdgeColor', bg, ...
+    'DisplayName', 'Experiments');
+scatter(ax8, best.Rt, best.Rz, 140, clr_opt, 'p', 'filled', ...
+    'MarkerEdgeColor', fg, 'DisplayName', 'PSO optimum');
+
+% Annotate arrow direction
+text(ax8, trRt(1), trRz(1), sprintf('  w_{Rz}=%.0f%%', alphaFine(1)*(1-fixedWVB)*100), ...
+    'Color', fg, 'FontSize', 9);
+text(ax8, trRt(end), trRz(end), sprintf('  w_{Rz}=%.0f%%', alphaFine(end)*(1-fixedWVB)*100), ...
+    'Color', fg, 'FontSize', 9);
+
+setDark(ax8);
+xlabel(ax8, 'Predicted R_t (\mum)', 'Color', fg, 'FontSize', 12);
+ylabel(ax8, 'Predicted R_z (\mum)', 'Color', fg, 'FontSize', 12);
+title(ax8, sprintf('R_z vs R_t Trade-Off Curve  (w_{VB} = %.2f fixed)', fixedWVB), ...
+    'Color', fg, 'FontSize', 13, 'FontWeight', 'bold');
+leg8 = legend(ax8, 'Location', 'best');
+leg8.TextColor = fg; leg8.Color = bg; leg8.EdgeColor = grid_c;
+grid(ax8, 'on'); box(ax8, 'on');
+saveas(fig8, fullfile(resultsDir, 'fig8_rz_vs_rt_tradeoff.png'));
+
+% --- Figure 9: Desirability vs Rz/(Rz+Rt) weight ratio ---
+fig9 = figure('Color', bg, 'Name', '9 - Desirability vs Weight Ratio', 'NumberTitle', 'off');
+ax9  = axes(fig9);
+
+clrs9 = [clr_Rz; clr_Rt; clr_VB; clr_opt];
+hold(ax9, 'on');
+
+for iw = 1:numel(wearLevels)
+    mask = abs(sweepData(:,3) - wearLevels(iw)) < 1e-6;
+    sd = sweepData(mask, :);
+    % weight ratio = wRz / (wRz + wRt)
+    ratio = sd(:,1) ./ (sd(:,1) + sd(:,2));
+    plot(ax9, ratio, sd(:,10), '-o', 'Color', clrs9(iw,:), 'LineWidth', 2, ...
+        'MarkerSize', 5, 'MarkerFaceColor', clrs9(iw,:), ...
+        'DisplayName', sprintf('w_{VB} = %.2f', wearLevels(iw)));
+end
+
+% Mark the balanced optimum
+balRatio = mainWeights.Rz / (mainWeights.Rz + mainWeights.Rt);
+scatter(ax9, balRatio, best.D, 140, clr_exp, 'p', 'filled', ...
+    'MarkerEdgeColor', fg, 'DisplayName', 'Balanced optimum');
+
+setDark(ax9);
+xlabel(ax9, 'w_{Rz} / (w_{Rz} + w_{Rt})  \rightarrow  more R_z priority', 'Color', fg, 'FontSize', 12);
+ylabel(ax9, 'Overall Desirability D', 'Color', fg, 'FontSize', 12);
+title(ax9, 'Desirability vs Roughness Weight Ratio', 'Color', fg, 'FontSize', 13, 'FontWeight', 'bold');
+leg9 = legend(ax9, 'Location', 'best');
+leg9.TextColor = fg; leg9.Color = bg; leg9.EdgeColor = grid_c;
+grid(ax9, 'on'); box(ax9, 'on');
+saveas(fig9, fullfile(resultsDir, 'fig9_desirability_vs_weight_ratio.png'));
+
+fprintf('\nAll 9 figures and CSV tables saved in: %s/\n', resultsDir);
 fprintf('Done!\n');
 
 %% ======================== LOCAL FUNCTIONS ================================
