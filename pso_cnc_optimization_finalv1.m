@@ -435,7 +435,7 @@ plotIdLine(ax1a, Rz, cvRz, clr_ref);
 setDark(ax1a);
 xlabel(ax1a, 'Measured R_z (\mum)', 'Color', fg);
 ylabel(ax1a, 'LOOCV Predicted R_z (\mum)', 'Color', fg);
-title(ax1a, sprintf('R_z  [%s]  Train R^2=%.3f  LOOCV R^2=%.3f', bestKernels{1}, R2_Rz, statsRz.R2), ...
+title(ax1a, sprintf('R_z  [%s]  Train R^2=%.3f  LOOCV R^2=%.3f', 'Mat32', R2_Rz, statsRz.R2), ...
     'Color', fg, 'FontWeight', 'bold', 'FontSize', 10);
 grid(ax1a, 'on'); axis(ax1a, 'square');
 
@@ -445,7 +445,7 @@ plotIdLine(ax1b, Rt, cvRt, clr_ref);
 setDark(ax1b);
 xlabel(ax1b, 'Measured R_t (\mum)', 'Color', fg);
 ylabel(ax1b, 'LOOCV Predicted R_t (\mum)', 'Color', fg);
-title(ax1b, sprintf('R_t  [%s]  Train R^2=%.3f  LOOCV R^2=%.3f', bestKernels{2}, R2_Rt, statsRt.R2), ...
+title(ax1b, sprintf('R_t  [%s]  Train R^2=%.3f  LOOCV R^2=%.3f', 'Mat32', R2_Rt, statsRt.R2), ...
     'Color', fg, 'FontWeight', 'bold', 'FontSize', 10);
 grid(ax1b, 'on'); axis(ax1b, 'square');
 
@@ -455,7 +455,7 @@ plotIdLine(ax1c, VB, cvVB, clr_ref);
 setDark(ax1c);
 xlabel(ax1c, 'Measured VB (mm)', 'Color', fg);
 ylabel(ax1c, 'LOOCV Predicted VB (mm)', 'Color', fg);
-title(ax1c, sprintf('VB  [%s]  Train R^2=%.3f  LOOCV R^2=%.3f', bestKernels{3}, R2_VB, statsVB.R2), ...
+title(ax1c, sprintf('VB  [%s]  Train R^2=%.3f  LOOCV R^2=%.3f', 'Mat32', R2_VB, statsVB.R2), ...
     'Color', fg, 'FontWeight', 'bold', 'FontSize', 10);
 grid(ax1c, 'on'); axis(ax1c, 'square');
 
