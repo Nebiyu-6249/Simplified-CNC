@@ -98,67 +98,63 @@ rawData = [
     715, 100, 0.20, 0.05175, 1.0967,       0.9333;
     715, 100, 0.10, 0.03750, 1.8067,       1.4767];
 
-X   = rawData(:, 1:3);
-VB  = rawData(:, 4);
-Rt  = rawData(:, 5);
-Rz  = rawData(:, 6);
+Xraw   = rawData(:, 1:3);
+VBraw  = rawData(:, 4);
+Rtraw  = rawData(:, 5);
+Rzraw  = rawData(:, 6);
+
+% --- Average repeated design points before training ---
+[Xu, ~, ic] = unique(Xraw, 'rows');
+nUniq = size(Xu, 1);
+RzAvg = accumarray(ic, Rzraw, [], @mean);
+RtAvg = accumarray(ic, Rtraw, [], @mean);
+VBAvg = accumarray(ic, VBraw, [], @mean);
+
+fprintf('Raw experimental runs : %d\n', size(Xraw, 1));
+fprintf('Unique design points  : %d  (repeated points averaged)\n', nUniq);
+
+X  = Xu;
+Rz = RzAvg;
+Rt = RtAvg;
+VB = VBAvg;
 
 lb = [min(X(:,1)), min(X(:,2)), min(X(:,3))];
 ub = [max(X(:,1)), max(X(:,2)), max(X(:,3))];
 n  = size(X, 1);
 
-fprintf('Experimental runs: %d\n', n);
 fprintf('Bounds:\n');
 fprintf('  Vc  = %.0f to %.0f m/min\n',  lb(1), ub(1));
 fprintf('  f   = %.0f to %.0f mm/min\n', lb(2), ub(2));
 fprintf('  DOC = %.2f to %.2f mm\n\n',   lb(3), ub(3));
 
 %% ======================== TRAIN GPR SURROGATES ===========================
-% Automatically try several kernels per response and keep the one with the
-% best LOOCV R^2. This avoids the ARD kernel overfitting on 17 points.
-fprintf('--- GPR Kernel Auto-Selection (best LOOCV R^2 wins) ---\n');
-
-kernelCandidates = {'squaredexponential', 'matern32', 'matern52', 'ardsquaredexponential', 'ardmatern52'};
-kernelShortNames = {'SE', 'Mat32', 'Mat52', 'ARD-SE', 'ARD-Mat52'};
+% Fixed Matern 3/2 kernel with explicit noise (Sigma) to avoid overfitting.
+% The model no longer assumes near-perfect data.
+gprSigma = 0.02;   % measurement noise std dev
+fprintf('--- GPR Training: Matern 3/2 kernel, Sigma = %.3f ---\n', gprSigma);
 
 responses    = {Rz, Rt, VB};
 respNames    = {'Rz', 'Rt', 'VB'};
 bestModels   = cell(1, 3);
-bestKernels  = cell(1, 3);
 bestCVpreds  = cell(1, 3);
 bestCVstats  = cell(1, 3);
 bestTrainR2  = zeros(1, 3);
 
 for ri = 1:3
     y = responses{ri};
-    bestR2cv = -Inf;
 
-    fprintf('\n  %s: testing %d kernels...\n', respNames{ri}, numel(kernelCandidates));
+    [cvPred, cvStats] = looForGPR(X, y, 'matern32', gprSigma);
 
-    for ki = 1:numel(kernelCandidates)
-        kname = kernelCandidates{ki};
-        try
-            [cvPred, cvStats] = looForGPR(X, y, kname);
-        catch
-            fprintf('    %s: failed, skipping\n', kernelShortNames{ki});
-            continue;
-        end
+    bestModels{ri}  = fitrgp(X, y, ...
+        'KernelFunction', 'matern32', ...
+        'Sigma', gprSigma, ...
+        'Standardize', true);
+    bestCVpreds{ri} = cvPred;
+    bestCVstats{ri} = cvStats;
+    bestTrainR2(ri) = calcR2(y, predict(bestModels{ri}, X));
 
-        fprintf('    %-10s  LOOCV R^2 = %+.4f   RMSE = %.4f\n', ...
-            kernelShortNames{ki}, cvStats.R2, cvStats.RMSE);
-
-        if cvStats.R2 > bestR2cv
-            bestR2cv = cvStats.R2;
-            bestModels{ri}  = fitrgp(X, y, 'KernelFunction', kname, 'Standardize', true);
-            bestKernels{ri}  = kernelShortNames{ki};
-            bestCVpreds{ri}  = cvPred;
-            bestCVstats{ri}  = cvStats;
-            bestTrainR2(ri)  = calcR2(y, predict(bestModels{ri}, X));
-        end
-    end
-
-    fprintf('  >> %s best kernel: %s  (LOOCV R^2 = %.4f, Training R^2 = %.4f)\n', ...
-        respNames{ri}, bestKernels{ri}, bestCVstats{ri}.R2, bestTrainR2(ri));
+    fprintf('  %s:  LOOCV R^2 = %.4f  RMSE = %.4f  |  Training R^2 = %.4f\n', ...
+        respNames{ri}, cvStats.R2, cvStats.RMSE, bestTrainR2(ri));
 end
 
 mdlRz = bestModels{1};
@@ -173,18 +169,51 @@ R2_Rz = bestTrainR2(1);
 R2_Rt = bestTrainR2(2);
 R2_VB = bestTrainR2(3);
 
-fprintf('\n=== SELECTED MODELS ===\n');
-fprintf('  Rz: %-10s  Training R^2 = %.4f  |  LOOCV R^2 = %.4f  RMSE = %.4f  MAE = %.4f\n', ...
-    bestKernels{1}, R2_Rz, statsRz.R2, statsRz.RMSE, statsRz.MAE);
-fprintf('  Rt: %-10s  Training R^2 = %.4f  |  LOOCV R^2 = %.4f  RMSE = %.4f  MAE = %.4f\n', ...
-    bestKernels{2}, R2_Rt, statsRt.R2, statsRt.RMSE, statsRt.MAE);
-fprintf('  VB: %-10s  Training R^2 = %.4f  |  LOOCV R^2 = %.4f  RMSE = %.4f  MAE = %.4f\n', ...
-    bestKernels{3}, R2_VB, statsVB.R2, statsVB.RMSE, statsVB.MAE);
+fprintf('\n=== SELECTED MODELS (Matern 3/2, Sigma=%.3f) ===\n', gprSigma);
+fprintf('  Rz:  Training R^2 = %.4f  |  LOOCV R^2 = %.4f  RMSE = %.4f  MAE = %.4f\n', ...
+    R2_Rz, statsRz.R2, statsRz.RMSE, statsRz.MAE);
+fprintf('  Rt:  Training R^2 = %.4f  |  LOOCV R^2 = %.4f  RMSE = %.4f  MAE = %.4f\n', ...
+    R2_Rt, statsRt.R2, statsRt.RMSE, statsRt.MAE);
+fprintf('  VB:  Training R^2 = %.4f  |  LOOCV R^2 = %.4f  RMSE = %.4f  MAE = %.4f\n', ...
+    R2_VB, statsVB.R2, statsVB.RMSE, statsVB.MAE);
 fprintf('\n');
 
 cvTbl = table((1:n)', Rz, cvRz, Rt, cvRt, VB, cvVB, ...
     'VariableNames', {'Run','Rz_Actual','Rz_LOOCV','Rt_Actual','Rt_LOOCV','VB_Actual','VB_LOOCV'});
 writetable(cvTbl, fullfile(resultsDir, 'loocv_predictions.csv'));
+
+%% ======================== SANITY CHECK (pre-PSO) =========================
+% Predict on training data and compare to actual values.
+% If predictions diverge from actuals the surrogate is unreliable.
+fprintf('--- Sanity Check: GPR predictions on training data ---\n');
+predRz_train = predict(mdlRz, X);
+predRt_train = predict(mdlRt, X);
+predVB_train = predict(mdlVB, X);
+
+maxErrRz = max(abs(predRz_train - Rz));
+maxErrRt = max(abs(predRt_train - Rt));
+maxErrVB = max(abs(predVB_train - VB));
+
+fprintf('  Rz max |pred - actual| = %.4f  (range %.4f)\n', maxErrRz, max(Rz)-min(Rz));
+fprintf('  Rt max |pred - actual| = %.4f  (range %.4f)\n', maxErrRt, max(Rt)-min(Rt));
+fprintf('  VB max |pred - actual| = %.5f  (range %.5f)\n', maxErrVB, max(VB)-min(VB));
+
+sanityOK = true;
+sanityThresh = 0.20;   % 20% of response range
+for ri = 1:3
+    y = responses{ri};
+    yPred = predict(bestModels{ri}, X);
+    relErr = max(abs(yPred - y)) / (max(y) - min(y));
+    if relErr > sanityThresh
+        fprintf('  WARNING: %s model max relative error = %.1f%% (threshold %.0f%%)\n', ...
+            respNames{ri}, relErr*100, sanityThresh*100);
+        sanityOK = false;
+    end
+end
+if sanityOK
+    fprintf('  All models pass sanity check (max error < %.0f%% of range).\n', sanityThresh*100);
+end
+fprintf('\n');
 
 %% ======================== DESIRABILITY LIMITS ============================
 limits.Rz.target = min(Rz);   limits.Rz.upper = max(Rz);
@@ -231,6 +260,19 @@ fprintf('Predicted Rt = %.4f um\n',  best.Rt);
 fprintf('Predicted VB = %.5f mm\n',  best.VB);
 fprintf('Overall Desirability D = %.4f\n', best.D);
 fprintf('============================================================\n\n');
+
+% --- Post-PSO check: nearest training point to the optimum ---
+[minDist, idx] = min(vecnorm(X - xBest, 2, 2));
+fprintf('--- Post-PSO Nearest-Neighbour Check ---\n');
+fprintf('  Nearest training point: Run #%d  (Euclidean dist = %.4f)\n', idx, minDist);
+fprintf('  That point: Vc=%.0f, f=%.0f, DOC=%.2f  |  Rz=%.4f, Rt=%.4f, VB=%.5f\n', ...
+    X(idx,1), X(idx,2), X(idx,3), Rz(idx), Rt(idx), VB(idx));
+if minDist > 0.5 * max(ub - lb)
+    fprintf('  WARNING: optimum is far from any training data – prediction may be unreliable.\n');
+else
+    fprintf('  Optimum is within well-sampled region.\n');
+end
+fprintf('\n');
 
 convHistory = PSO_HISTORY;
 
@@ -652,13 +694,16 @@ fprintf('Done!\n');
 
 %% ======================== LOCAL FUNCTIONS ================================
 
-function [predLOO, stats] = looForGPR(X, y, kernelName)
+function [predLOO, stats] = looForGPR(X, y, kernelName, sigma)
     n = size(X, 1);
     predLOO = zeros(n, 1);
     for i = 1:n
         idx = true(n, 1);
         idx(i) = false;
-        mdl = fitrgp(X(idx,:), y(idx), 'KernelFunction', kernelName, 'Standardize', true);
+        mdl = fitrgp(X(idx,:), y(idx), ...
+            'KernelFunction', kernelName, ...
+            'Sigma', sigma, ...
+            'Standardize', true);
         predLOO(i) = predict(mdl, X(i,:));
     end
     stats.R2   = calcR2(y, predLOO);
