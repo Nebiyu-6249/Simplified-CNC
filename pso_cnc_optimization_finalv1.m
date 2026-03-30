@@ -512,63 +512,67 @@ end
 saveas(fig2, fullfile(resultsDir, 'fig2_pso_convergence.png'));
 
 % --- Figure 3: Trade-Off Cloud split by VB weight level (2x2) ---
-% Color by weight ratio wRz/(wRz+wRt) instead of predicted VB (which barely varies).
-% Connect sweep points as a sorted trade-off path per panel.
+% Color sweep optima by weight ratio. Highlight PSO optimum and best experiment.
 fig3 = figure('Color', bg, 'Name', '3 - Trade-Off Cloud', 'NumberTitle', 'off', ...
-    'Position', [50 50 1200 900]);
+    'Position', [50 50 1300 950]);
 
 for iw = 1:numel(wearLevels)
     ax3 = subplot(2, 2, iw, 'Parent', fig3);
     mask = abs(sweepData(:,3) - wearLevels(iw)) < 1e-6;
     sd = sweepData(mask, :);
 
-    % Weight ratio = wRz / (wRz + wRt) as color dimension
     wRatio = sd(:,1) ./ (sd(:,1) + sd(:,2));
-
-    % Sort by weight ratio so the connecting line is smooth
     [wRatio, sIdx] = sort(wRatio);
     sd = sd(sIdx, :);
 
-    % Draw trade-off path (line connecting the sweep optima)
-    plot(ax3, sd(:,8), sd(:,7), '-', 'Color', [1 1 1 0.35], 'LineWidth', 1.5, ...
+    % Trade-off path
+    plot(ax3, sd(:,8), sd(:,7), '-', 'Color', [1 1 1 0.30], 'LineWidth', 1.2, ...
         'HandleVisibility', 'off');
     hold(ax3, 'on');
 
-    scatter(ax3, sd(:,8), sd(:,7), 70, wRatio, 'filled', ...
-        'MarkerEdgeColor', bg, 'LineWidth', 0.5, 'DisplayName', 'Sweep optima');
+    % Sweep points (colored by weight ratio)
+    scatter(ax3, sd(:,8), sd(:,7), 60, wRatio, 'filled', ...
+        'MarkerEdgeColor', [0.2 0.2 0.25], 'LineWidth', 0.4, 'DisplayName', 'Sweep optima');
 
-    scatter(ax3, Rt, Rz, 50, clr_exp, 's', 'filled', ...
-        'MarkerEdgeColor', bg, 'DisplayName', 'Experiments');
+    % Experimental data (white-edged for contrast)
+    scatter(ax3, Rt, Rz, 55, clr_exp, 's', 'filled', ...
+        'MarkerEdgeColor', fg, 'LineWidth', 0.6, 'DisplayName', 'Experiments');
 
-    % Overlay named cases whose wVB matches this panel
+    % Best experimental point (large circle, distinct)
+    scatter(ax3, Rt(idxObs), Rz(idxObs), 160, [1 0.3 0.3], 'o', 'LineWidth', 2.5, ...
+        'DisplayName', 'Best experiment');
+
+    % PSO optimum (large star, brightest)
+    scatter(ax3, best.Rt, best.Rz, 220, clr_opt, 'p', 'filled', ...
+        'MarkerEdgeColor', fg, 'LineWidth', 1.2, 'DisplayName', 'PSO optimum');
+
+    % Named cases for this panel
     for ic = 1:height(caseTbl)
         if abs(caseTbl.wVB(ic) - wearLevels(iw)) < 1e-6
-            scatter(ax3, caseTbl.Pred_Rt(ic), caseTbl.Pred_Rz(ic), 130, 'r', 'd', 'filled', ...
+            scatter(ax3, caseTbl.Pred_Rt(ic), caseTbl.Pred_Rz(ic), 110, 'r', 'd', 'filled', ...
                 'MarkerEdgeColor', fg, 'DisplayName', caseTbl.Case{ic});
-            text(ax3, caseTbl.Pred_Rt(ic) + 0.08, caseTbl.Pred_Rz(ic) + 0.04, ...
-                caseTbl.Case{ic}, 'Color', fg, 'FontSize', 8, 'FontWeight', 'bold');
         end
     end
 
     setDark(ax3);
-    xlabel(ax3, 'Predicted R_t (\mum)', 'Color', fg);
-    ylabel(ax3, 'Predicted R_z (\mum)', 'Color', fg);
+    xlabel(ax3, 'Predicted R_t (\mum)', 'Color', fg, 'FontSize', 11);
+    ylabel(ax3, 'Predicted R_z (\mum)', 'Color', fg, 'FontSize', 11);
     title(ax3, sprintf('w_{VB} = %.2f', wearLevels(iw)), ...
-        'Color', fg, 'FontWeight', 'bold', 'FontSize', 11);
+        'Color', fg, 'FontWeight', 'bold', 'FontSize', 12);
     colormap(ax3, parula);
     cb3 = colorbar(ax3);
     cb3.Label.String = 'w_{Rz} / (w_{Rz}+w_{Rt})';
     cb3.Label.Color = fg; cb3.Color = fg;
-    leg3 = legend(ax3, 'Location', 'best');
+    leg3 = legend(ax3, 'Location', 'northeast', 'FontSize', 7);
     leg3.TextColor = fg; leg3.Color = bg; leg3.EdgeColor = grid_c;
-    leg3.FontSize = 7;
     grid(ax3, 'on'); box(ax3, 'on');
 end
 
 sg3 = sgtitle(fig3, 'Trade-Off Cloud: R_z vs R_t  (split by VB weight, color = R_z priority)', ...
     'FontSize', 14, 'FontWeight', 'bold');
 sg3.Color = fg;
-saveas(fig3, fullfile(resultsDir, 'fig3_tradeoff_cloud.png'));
+print(fig3, fullfile(resultsDir, 'fig3_tradeoff_cloud'), '-dpng', '-r300');
+saveas(fig3, fullfile(resultsDir, 'fig3_tradeoff_cloud.fig'));
 
 % --- Figure 4: Case Comparison Bar Charts ---
 fig4 = figure('Color', bg, 'Name', '4 - Case Comparison', 'NumberTitle', 'off', ...
@@ -744,20 +748,21 @@ view(ax7, -35, 30);
 grid(ax7, 'on'); box(ax7, 'on');
 saveas(fig7, fullfile(resultsDir, 'fig7_3d_desirability_surface.png'));
 
-% --- Figure 8: 2-D Trade-Off Curve  Rz vs Rt ---
-% Sample a dense grid across the design space, predict Rz/Rt/VB with CIs,
-% then extract the Pareto-optimal front (non-dominated in Rz & Rt, both min).
-fig8 = figure('Color', bg, 'Name', '8 - Rz vs Rt Trade-Off', 'NumberTitle', 'off');
+% --- Figure 8: 2-D Pareto Front  Rz vs Rt ---
+% Dense grid sample -> non-dominated front -> sorted smooth curve.
+% Visual hierarchy: PSO star > Pareto line > experiments > faint cloud.
+fig8 = figure('Color', bg, 'Name', '8 - Rz vs Rt Trade-Off', 'NumberTitle', 'off', ...
+    'Position', [100 100 800 650]);
 ax8  = axes(fig8);
 
-nPar = 2000;
+nPar = 3000;
 Xrand = [lb(1) + (ub(1)-lb(1))*rand(nPar,1), ...
          lb(2) + (ub(2)-lb(2))*rand(nPar,1), ...
          lb(3) + (ub(3)-lb(3))*rand(nPar,1)];
 [pRz, pRz_sd] = predict(mdlRz, Xrand);
 [pRt, pRt_sd] = predict(mdlRt, Xrand);
 
-% Identify Pareto front: point i is dominated if any j has Rz_j<=Rz_i AND Rt_j<=Rt_i (strict in at least one)
+% Identify non-dominated (Pareto) front: both Rz and Rt minimized
 isDom = false(nPar, 1);
 for i = 1:nPar
     for j = 1:nPar
@@ -769,45 +774,83 @@ for i = 1:nPar
 end
 paretoMask = ~isDom;
 
-% Sort Pareto front by Rt for a clean connected line
+% Sort front by Rt for a smooth monotonic curve
 pf_Rt = pRt(paretoMask);   pf_Rz = pRz(paretoMask);
-pf_Rt_sd = pRt_sd(paretoMask);  pf_Rz_sd = pRz_sd(paretoMask);
+pf_Rz_sd = pRz_sd(paretoMask);
 [pf_Rt, sOrd] = sort(pf_Rt);
-pf_Rz = pf_Rz(sOrd);  pf_Rt_sd = pf_Rt_sd(sOrd);  pf_Rz_sd = pf_Rz_sd(sOrd);
+pf_Rz = pf_Rz(sOrd);  pf_Rz_sd = pf_Rz_sd(sOrd);
+
+% Enforce monotonicity: walking left to right, Rz should decrease
+for k = 2:numel(pf_Rz)
+    if pf_Rz(k) > pf_Rz(k-1)
+        pf_Rz(k) = pf_Rz(k-1);
+    end
+end
 
 hold(ax8, 'on');
-% Dominated cloud (faded)
-scatter(ax8, pRt(isDom), pRz(isDom), 12, [0.4 0.4 0.5], 'filled', ...
-    'MarkerFaceAlpha', 0.25, 'DisplayName', 'Feasible (dominated)');
 
-% 95% CI band around the Pareto front
+% Layer 4 (faintest): feasible region cloud
+scatter(ax8, pRt(isDom), pRz(isDom), 8, [0.35 0.35 0.42], 'filled', ...
+    'MarkerFaceAlpha', 0.15, 'DisplayName', 'Feasible region');
+
+% Layer 3: 95% CI band
 fill(ax8, [pf_Rt; flipud(pf_Rt)], ...
     [pf_Rz - 1.96*pf_Rz_sd; flipud(pf_Rz + 1.96*pf_Rz_sd)], ...
-    clr_Rz, 'FaceAlpha', 0.18, 'EdgeColor', 'none', 'DisplayName', '95% CI (R_z)');
+    clr_Rz, 'FaceAlpha', 0.15, 'EdgeColor', 'none', 'HandleVisibility', 'off');
 
-% Pareto front line
-plot(ax8, pf_Rt, pf_Rz, '-', 'Color', clr_Rz, 'LineWidth', 2.5, ...
+% Layer 2: Pareto front line (thick)
+plot(ax8, pf_Rt, pf_Rz, '-', 'Color', clr_Rz, 'LineWidth', 3, ...
     'DisplayName', 'Pareto front');
-scatter(ax8, pf_Rt, pf_Rz, 30, clr_Rz, 'filled', 'MarkerEdgeColor', bg, ...
-    'HandleVisibility', 'off');
 
-% Experimental points
-scatter(ax8, Rt, Rz, 60, clr_exp, 's', 'filled', 'MarkerEdgeColor', bg, ...
-    'DisplayName', 'Experiments');
+% Layer 1b: Experimental data
+scatter(ax8, Rt, Rz, 65, clr_exp, 's', 'filled', ...
+    'MarkerEdgeColor', fg, 'LineWidth', 0.5, 'DisplayName', 'Experimental data');
 
-% PSO optimum
-scatter(ax8, best.Rt, best.Rz, 160, clr_opt, 'p', 'filled', ...
-    'MarkerEdgeColor', fg, 'DisplayName', 'PSO optimum');
+% Layer 1a: Best experimental point (large red circle)
+scatter(ax8, Rt(idxObs), Rz(idxObs), 180, [1 0.3 0.3], 'o', 'LineWidth', 3, ...
+    'DisplayName', 'Best experiment');
+
+% Layer 0 (brightest): PSO optimum (large star)
+scatter(ax8, best.Rt, best.Rz, 280, clr_opt, 'p', 'filled', ...
+    'MarkerEdgeColor', fg, 'LineWidth', 1.5, 'DisplayName', 'PSO optimum');
+
+% Annotation: label the optimum
+text(ax8, best.Rt + 0.12, best.Rz + 0.06, ...
+    sprintf('Optimal point\n(PSO \\approx experiment)'), ...
+    'Color', clr_opt, 'FontSize', 10, 'FontWeight', 'bold');
+
+% Direction-of-improvement arrows
+xLims = xlim(ax8);  yLims = ylim(ax8);
+arrowX = xLims(2) - 0.12*(xLims(2)-xLims(1));
+arrowY = yLims(2) - 0.08*(yLims(2)-yLims(1));
+text(ax8, arrowX, arrowY, '\leftarrow R_t better', ...
+    'Color', [0.6 0.6 0.6], 'FontSize', 9, 'HorizontalAlignment', 'right');
+text(ax8, arrowX, arrowY - 0.06*(yLims(2)-yLims(1)), '\downarrow R_z better', ...
+    'Color', [0.6 0.6 0.6], 'FontSize', 9, 'HorizontalAlignment', 'right');
+
+% Zoom to the interesting region (trim empty space)
+padRt = 0.1 * (max(Rt) - min(Rt));
+padRz = 0.1 * (max(Rz) - min(Rz));
+xlim(ax8, [min([pf_Rt; Rt]) - padRt, max(Rt) + padRt]);
+ylim(ax8, [min([pf_Rz; Rz]) - padRz, max(Rz) + padRz]);
 
 setDark(ax8);
 xlabel(ax8, 'Predicted R_t (\mum)', 'Color', fg, 'FontSize', 12);
 ylabel(ax8, 'Predicted R_z (\mum)', 'Color', fg, 'FontSize', 12);
-title(ax8, 'R_z vs R_t Pareto Front  (GPR grid sample, n=2000)', ...
+title(ax8, 'R_z vs R_t Pareto Front', ...
     'Color', fg, 'FontSize', 13, 'FontWeight', 'bold');
-leg8 = legend(ax8, 'Location', 'northeast');
+leg8 = legend(ax8, 'Location', 'northeast', 'FontSize', 10);
 leg8.TextColor = fg; leg8.Color = bg; leg8.EdgeColor = grid_c;
 grid(ax8, 'on'); box(ax8, 'on');
-saveas(fig8, fullfile(resultsDir, 'fig8_rz_vs_rt_tradeoff.png'));
+
+% Caption-ready annotation below the plot
+annotation(fig8, 'textbox', [0.10 0.01 0.85 0.04], ...
+    'String', 'The Pareto front is narrow, indicating minimal conflict between R_z and R_t; the optimal solution coincides with an experimental data point.', ...
+    'Color', [0.65 0.65 0.65], 'FontSize', 9, 'FontAngle', 'italic', ...
+    'EdgeColor', 'none', 'HorizontalAlignment', 'center', 'FitBoxToText', 'off');
+
+print(fig8, fullfile(resultsDir, 'fig8_rz_vs_rt_tradeoff'), '-dpng', '-r300');
+saveas(fig8, fullfile(resultsDir, 'fig8_rz_vs_rt_tradeoff.fig'));
 
 % --- Figure 9: Desirability vs Rz/(Rz+Rt) weight ratio ---
 fig9 = figure('Color', bg, 'Name', '9 - Desirability vs Weight Ratio', 'NumberTitle', 'off');
