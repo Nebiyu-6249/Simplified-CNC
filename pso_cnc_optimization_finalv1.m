@@ -512,6 +512,8 @@ end
 saveas(fig2, fullfile(resultsDir, 'fig2_pso_convergence.png'));
 
 % --- Figure 3: Trade-Off Cloud split by VB weight level (2x2) ---
+% Color by weight ratio wRz/(wRz+wRt) instead of predicted VB (which barely varies).
+% Connect sweep points as a sorted trade-off path per panel.
 fig3 = figure('Color', bg, 'Name', '3 - Trade-Off Cloud', 'NumberTitle', 'off', ...
     'Position', [50 50 1200 900]);
 
@@ -520,20 +522,31 @@ for iw = 1:numel(wearLevels)
     mask = abs(sweepData(:,3) - wearLevels(iw)) < 1e-6;
     sd = sweepData(mask, :);
 
-    scatter(ax3, sd(:,8), sd(:,7), 70, sd(:,9), 'filled', ...
-        'MarkerEdgeColor', bg, 'LineWidth', 0.5);
+    % Weight ratio = wRz / (wRz + wRt) as color dimension
+    wRatio = sd(:,1) ./ (sd(:,1) + sd(:,2));
+
+    % Sort by weight ratio so the connecting line is smooth
+    [wRatio, sIdx] = sort(wRatio);
+    sd = sd(sIdx, :);
+
+    % Draw trade-off path (line connecting the sweep optima)
+    plot(ax3, sd(:,8), sd(:,7), '-', 'Color', [1 1 1 0.35], 'LineWidth', 1.5, ...
+        'HandleVisibility', 'off');
     hold(ax3, 'on');
 
-    scatter(ax3, Rt, Rz, 45, clr_exp, 's', 'filled', ...
+    scatter(ax3, sd(:,8), sd(:,7), 70, wRatio, 'filled', ...
+        'MarkerEdgeColor', bg, 'LineWidth', 0.5, 'DisplayName', 'Sweep optima');
+
+    scatter(ax3, Rt, Rz, 50, clr_exp, 's', 'filled', ...
         'MarkerEdgeColor', bg, 'DisplayName', 'Experiments');
 
     % Overlay named cases whose wVB matches this panel
     for ic = 1:height(caseTbl)
         if abs(caseTbl.wVB(ic) - wearLevels(iw)) < 1e-6
             scatter(ax3, caseTbl.Pred_Rt(ic), caseTbl.Pred_Rz(ic), 130, 'r', 'd', 'filled', ...
-                'MarkerEdgeColor', fg, 'HandleVisibility', 'off');
-            text(ax3, caseTbl.Pred_Rt(ic), caseTbl.Pred_Rz(ic), ['  ' caseTbl.Case{ic}], ...
-                'Color', fg, 'FontSize', 8, 'FontWeight', 'bold');
+                'MarkerEdgeColor', fg, 'DisplayName', caseTbl.Case{ic});
+            text(ax3, caseTbl.Pred_Rt(ic) + 0.08, caseTbl.Pred_Rz(ic) + 0.04, ...
+                caseTbl.Case{ic}, 'Color', fg, 'FontSize', 8, 'FontWeight', 'bold');
         end
     end
 
@@ -544,12 +557,15 @@ for iw = 1:numel(wearLevels)
         'Color', fg, 'FontWeight', 'bold', 'FontSize', 11);
     colormap(ax3, parula);
     cb3 = colorbar(ax3);
-    cb3.Label.String = 'Pred VB (mm)';
+    cb3.Label.String = 'w_{Rz} / (w_{Rz}+w_{Rt})';
     cb3.Label.Color = fg; cb3.Color = fg;
+    leg3 = legend(ax3, 'Location', 'best');
+    leg3.TextColor = fg; leg3.Color = bg; leg3.EdgeColor = grid_c;
+    leg3.FontSize = 7;
     grid(ax3, 'on'); box(ax3, 'on');
 end
 
-sg3 = sgtitle(fig3, 'Trade-Off Cloud: R_z vs R_t  (split by VB weight)', ...
+sg3 = sgtitle(fig3, 'Trade-Off Cloud: R_z vs R_t  (split by VB weight, color = R_z priority)', ...
     'FontSize', 14, 'FontWeight', 'bold');
 sg3.Color = fg;
 saveas(fig3, fullfile(resultsDir, 'fig3_tradeoff_cloud.png'));
@@ -728,52 +744,67 @@ view(ax7, -35, 30);
 grid(ax7, 'on'); box(ax7, 'on');
 saveas(fig7, fullfile(resultsDir, 'fig7_3d_desirability_surface.png'));
 
-% --- Figure 8: 2-D Trade-Off Curve  Rz vs Rt (fixed VB weight = 0.20) ---
+% --- Figure 8: 2-D Trade-Off Curve  Rz vs Rt ---
+% Sample a dense grid across the design space, predict Rz/Rt/VB with CIs,
+% then extract the Pareto-optimal front (non-dominated in Rz & Rt, both min).
 fig8 = figure('Color', bg, 'Name', '8 - Rz vs Rt Trade-Off', 'NumberTitle', 'off');
 ax8  = axes(fig8);
 
-fixedWVB = 0.20;
-alphaFine = linspace(0.05, 0.95, 40);
-trRz = zeros(size(alphaFine));
-trRt = zeros(size(alphaFine));
-trRz_sd = zeros(size(alphaFine));
-trRt_sd = zeros(size(alphaFine));
+nPar = 2000;
+Xrand = [lb(1) + (ub(1)-lb(1))*rand(nPar,1), ...
+         lb(2) + (ub(2)-lb(2))*rand(nPar,1), ...
+         lb(3) + (ub(3)-lb(3))*rand(nPar,1)];
+[pRz, pRz_sd] = predict(mdlRz, Xrand);
+[pRt, pRt_sd] = predict(mdlRt, Xrand);
 
-for ia = 1:numel(alphaFine)
-    a = alphaFine(ia);
-    remain = 1 - fixedWVB;
-    w = struct('Rz', remain*a, 'Rt', remain*(1-a), 'VB', fixedWVB);
-    obj = @(x) desirabilityObjective(x, mdlRz, mdlRt, mdlVB, ...
-        limits, w, shape, X, lb, ub, usePenalty, penaltyStartDist, penaltyWeight);
-    [xS, ~] = particleswarm(obj, 3, lb, ub, optsFast);
-    [trRz(ia), trRz_sd(ia)] = predict(mdlRz, xS);
-    [trRt(ia), trRt_sd(ia)] = predict(mdlRt, xS);
+% Identify Pareto front: point i is dominated if any j has Rz_j<=Rz_i AND Rt_j<=Rt_i (strict in at least one)
+isDom = false(nPar, 1);
+for i = 1:nPar
+    for j = 1:nPar
+        if j ~= i && pRz(j) <= pRz(i) && pRt(j) <= pRt(i) && (pRz(j) < pRz(i) || pRt(j) < pRt(i))
+            isDom(i) = true;
+            break;
+        end
+    end
 end
+paretoMask = ~isDom;
+
+% Sort Pareto front by Rt for a clean connected line
+pf_Rt = pRt(paretoMask);   pf_Rz = pRz(paretoMask);
+pf_Rt_sd = pRt_sd(paretoMask);  pf_Rz_sd = pRz_sd(paretoMask);
+[pf_Rt, sOrd] = sort(pf_Rt);
+pf_Rz = pf_Rz(sOrd);  pf_Rt_sd = pf_Rt_sd(sOrd);  pf_Rz_sd = pf_Rz_sd(sOrd);
 
 hold(ax8, 'on');
-% 95% CI ellipse-like bands
-fill(ax8, [trRt - 1.96*trRt_sd, fliplr(trRt + 1.96*trRt_sd)], ...
-    [trRz - 1.96*trRz_sd, fliplr(trRz + 1.96*trRz_sd)], ...
-    clr_Rz, 'FaceAlpha', 0.15, 'EdgeColor', 'none');
-plot(ax8, trRt, trRz, '-o', 'Color', clr_Rz, 'LineWidth', 2, ...
-    'MarkerSize', 5, 'MarkerFaceColor', clr_Rz, 'DisplayName', 'Pareto front (w_{VB}=0.20)');
-scatter(ax8, Rt, Rz, 55, clr_exp, 's', 'filled', 'MarkerEdgeColor', bg, ...
-    'DisplayName', 'Experiments');
-scatter(ax8, best.Rt, best.Rz, 140, clr_opt, 'p', 'filled', ...
-    'MarkerEdgeColor', fg, 'DisplayName', 'PSO optimum');
+% Dominated cloud (faded)
+scatter(ax8, pRt(isDom), pRz(isDom), 12, [0.4 0.4 0.5], 'filled', ...
+    'MarkerFaceAlpha', 0.25, 'DisplayName', 'Feasible (dominated)');
 
-% Annotate arrow direction
-text(ax8, trRt(1), trRz(1), sprintf('  w_{Rz}=%.0f%%', alphaFine(1)*(1-fixedWVB)*100), ...
-    'Color', fg, 'FontSize', 9);
-text(ax8, trRt(end), trRz(end), sprintf('  w_{Rz}=%.0f%%', alphaFine(end)*(1-fixedWVB)*100), ...
-    'Color', fg, 'FontSize', 9);
+% 95% CI band around the Pareto front
+fill(ax8, [pf_Rt; flipud(pf_Rt)], ...
+    [pf_Rz - 1.96*pf_Rz_sd; flipud(pf_Rz + 1.96*pf_Rz_sd)], ...
+    clr_Rz, 'FaceAlpha', 0.18, 'EdgeColor', 'none', 'DisplayName', '95% CI (R_z)');
+
+% Pareto front line
+plot(ax8, pf_Rt, pf_Rz, '-', 'Color', clr_Rz, 'LineWidth', 2.5, ...
+    'DisplayName', 'Pareto front');
+scatter(ax8, pf_Rt, pf_Rz, 30, clr_Rz, 'filled', 'MarkerEdgeColor', bg, ...
+    'HandleVisibility', 'off');
+
+% Experimental points
+scatter(ax8, Rt, Rz, 60, clr_exp, 's', 'filled', 'MarkerEdgeColor', bg, ...
+    'DisplayName', 'Experiments');
+
+% PSO optimum
+scatter(ax8, best.Rt, best.Rz, 160, clr_opt, 'p', 'filled', ...
+    'MarkerEdgeColor', fg, 'DisplayName', 'PSO optimum');
 
 setDark(ax8);
 xlabel(ax8, 'Predicted R_t (\mum)', 'Color', fg, 'FontSize', 12);
 ylabel(ax8, 'Predicted R_z (\mum)', 'Color', fg, 'FontSize', 12);
-title(ax8, sprintf('R_z vs R_t Trade-Off Curve  (w_{VB} = %.2f fixed)', fixedWVB), ...
+title(ax8, 'R_z vs R_t Pareto Front  (GPR grid sample, n=2000)', ...
     'Color', fg, 'FontSize', 13, 'FontWeight', 'bold');
-leg8 = legend(ax8, 'Location', 'best');
+leg8 = legend(ax8, 'Location', 'northeast');
 leg8.TextColor = fg; leg8.Color = bg; leg8.EdgeColor = grid_c;
 grid(ax8, 'on'); box(ax8, 'on');
 saveas(fig8, fullfile(resultsDir, 'fig8_rz_vs_rt_tradeoff.png'));
